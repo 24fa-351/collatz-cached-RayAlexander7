@@ -1,0 +1,159 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+#include <string.h>
+
+#define CACHE_SIZE 100  // Adjust cache size as needed
+
+// Cache entry structure
+typedef struct {
+    int key;
+    int value;
+    int frequency;  // For LFU
+    int time;      // For LRU
+} CacheEntry;
+
+// Cache array
+CacheEntry cache[CACHE_SIZE];
+int cache_used = 0;
+int time_counter = 0;
+
+// Function to check if a number is in cache
+int get_from_cache(int num, char *policy, int *cache_hits) {
+    for (int i = 0; i < cache_used; i++) {
+        if (cache[i].key == num) {
+            (*cache_hits)++;
+            if (strcmp(policy, "LFU") == 0) {
+                cache[i].frequency++;
+            }
+            if (strcmp(policy, "LRU") == 0) {
+                cache[i].time = time_counter++;
+            }
+            return cache[i].value;
+        }
+    }
+    return -1;  // Not found
+}
+
+// Function to evict based on policy (FIFO, LRU, LFU, MRU, RR)
+void evict_from_cache(char *policy) {
+    int evict_index = 0;
+    if (strcmp(policy, "FIFO") == 0 || strcmp(policy, "MRU") == 0) {
+        // Evict first (FIFO) or last used (MRU)
+        evict_index = (strcmp(policy, "FIFO") == 0) ? 0 : cache_used - 1;
+    } else if (strcmp(policy, "LRU") == 0) {
+        // Evict least recently used (lowest time)
+        int min_time = cache[0].time;
+        for (int i = 1; i < cache_used; i++) {
+            if (cache[i].time < min_time) {
+                min_time = cache[i].time;
+                evict_index = i;
+            }
+        }
+    } else if (strcmp(policy, "LFU") == 0) {
+        // Evict least frequently used (lowest frequency)
+        int min_freq = cache[0].frequency;
+        for (int i = 1; i < cache_used; i++) {
+            if (cache[i].frequency < min_freq) {
+                min_freq = cache[i].frequency;
+                evict_index = i;
+            }
+        }
+    } else if (strcmp(policy, "RR") == 0) {
+        // Random replacement
+        evict_index = rand() % cache_used;
+    }
+    // Shift remaining cache entries
+    for (int i = evict_index; i < cache_used - 1; i++) {
+        cache[i] = cache[i + 1];
+    }
+    cache_used--;
+}
+
+// Function to add a number to the cache
+void add_to_cache(int num, int steps, char *policy) {
+    if (cache_used < CACHE_SIZE) {
+        cache[cache_used].key = num;
+        cache[cache_used].value = steps;
+        cache[cache_used].frequency = 1; // LFU
+        cache[cache_used].time = time_counter++; // LRU
+        cache_used++;
+    } else {
+        evict_from_cache(policy);
+        cache[cache_used].key = num;
+        cache[cache_used].value = steps;
+        cache[cache_used].frequency = 1; // LFU
+        cache[cache_used].time = time_counter++; // LRU
+        cache_used++;
+    }
+}
+
+// Collatz function
+int collatz_steps(int n, char *policy, int *cache_hits) {
+    int steps = 0;
+    int cached_steps = get_from_cache(n, policy, cache_hits);
+    if (cached_steps != -1) {
+        return cached_steps;  // Return cached result if available
+    }
+
+    int original_n = n;
+    while (n != 1) {
+        if (n % 2 == 0) {
+            n = n / 2;
+        } else {
+            n = 3 * n + 1;
+        }
+        steps++;
+    }
+
+    // Add result to cache
+    add_to_cache(original_n, steps, policy);
+
+    return steps;
+}
+
+int main(int argc, char *argv[]) {
+    if (argc != 6) {
+        printf("Usage: %s <N> <MIN> <MAX> <policy> <cache_size>\n", argv[0]);
+        return 1;
+    }
+
+    int N = atoi(argv[1]);
+    int MIN = atoi(argv[2]);
+    int MAX = atoi(argv[3]);
+    char *policy = argv[4];
+    int cache_size = atoi(argv[5]);
+
+    // Adjust global cache size
+    if (cache_size > 0 && cache_size <= CACHE_SIZE) {
+        cache_used = cache_size;
+    }
+
+    srand(time(NULL));  // Seed random number generator
+
+    FILE *file = fopen("collatz_output.csv", "w");
+    if (!file) {
+        printf("Error opening file.\n");
+        return 1;
+    }
+
+    fprintf(file, "Number,Steps,Cache_Hit\n");
+
+    int cache_hits = 0;
+    clock_t start_time = clock();
+    for (int i = 0; i < N; i++) {
+        int random_num = MIN + rand() % (MAX - MIN + 1);
+        int steps = collatz_steps(random_num, policy, &cache_hits);
+        fprintf(file, "%d,%d,%d\n", random_num, steps, cache_hits);
+        printf("Number: %d, Steps: %d\n", random_num, steps);
+    }
+    clock_t end_time = clock();
+
+    double total_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
+    printf("Total execution time: %.2f seconds\n", total_time);
+    printf("Cache hits: %d out of %d\n", cache_hits, N);
+
+    fclose(file);
+
+    return 0;
+}
